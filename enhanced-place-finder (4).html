@@ -387,6 +387,101 @@ body {
   color: #333;
 }
 
+/* Distance measurement panel */
+.distance-panel {
+  position: absolute;
+  top: 80px;
+  left: 10px;
+  background: white;
+  padding: 15px;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  z-index: 1000;
+  max-width: 280px;
+  display: none;
+}
+
+.distance-panel.show {
+  display: block;
+}
+
+.distance-panel h4 {
+  margin: 0 0 10px 0;
+  color: #333;
+  font-size: 14px;
+}
+
+.distance-panel .distance-info {
+  font-size: 12px;
+  line-height: 1.8;
+  color: #555;
+}
+
+.distance-panel .distance-value {
+  font-weight: bold;
+  color: #667eea;
+  font-size: 18px;
+  display: block;
+  margin: 8px 0;
+}
+
+.distance-panel .coord-info {
+  background: #f5f5f5;
+  padding: 8px;
+  border-radius: 4px;
+  margin: 5px 0;
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+}
+
+.distance-panel .coord-label {
+  font-weight: bold;
+  color: #667eea;
+}
+
+.distance-panel .close-btn {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  background: none;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  color: #999;
+  padding: 5px;
+}
+
+.distance-panel .close-btn:hover {
+  color: #333;
+}
+
+/* Measurement mode instructions */
+.measurement-instructions {
+  position: absolute;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(102, 126, 234, 0.95);
+  color: white;
+  padding: 12px 20px;
+  border-radius: 8px;
+  font-size: 13px;
+  z-index: 1000;
+  display: none;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  text-align: center;
+}
+
+.measurement-instructions.show {
+  display: block;
+}
+
+.measurement-instructions strong {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 14px;
+}
+
 /* Leaflet draw customization */
 .leaflet-draw-actions a {
   background-color: #667eea;
@@ -519,8 +614,11 @@ body {
             </div>
           </div>
         </div>
-        <button class="control-btn" id="measureBtn" onclick="toggleMeasure()">
-          📏 Measure Area
+        <button class="control-btn" id="distanceBtn" onclick="toggleDistanceMeasure()">
+          📏 Measure Distance
+        </button>
+        <button class="control-btn" id="areaBtn" onclick="toggleAreaMeasure()">
+          📐 Measure Area
         </button>
       </div>
       
@@ -541,6 +639,30 @@ body {
             <div>Vertices: <span id="vertexCount">-</span></div>
           </div>
         </div>
+      </div>
+      
+      <!-- Distance measurement panel -->
+      <div class="distance-panel" id="distancePanel">
+        <button class="close-btn" onclick="closeDistancePanel()">×</button>
+        <h4>📏 Distance Measurement</h4>
+        <div class="distance-info">
+          <span class="distance-value" id="distanceValue">0 m</span>
+          <div class="coord-info">
+            <div><span class="coord-label">Start:</span> <span id="startCoord">Click on map</span></div>
+            <div><span class="coord-label">End:</span> <span id="endCoord">Move cursor</span></div>
+          </div>
+          <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #eee;">
+            <button onclick="clearDistanceMeasurement()" style="padding: 6px 12px; background: #667eea; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; width: 100%;">
+              Clear & Restart
+            </button>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Measurement instructions -->
+      <div class="measurement-instructions" id="measureInstructions">
+        <strong>Distance Mode Active</strong>
+        Click to set start point, then move cursor to see distance
       </div>
     </div>
   </div>
@@ -564,8 +686,16 @@ var currentRoute = null;
 var currentMapType = 'street';
 var drawControl = null;
 var drawnItems = new L.FeatureGroup();
-var measureMode = false;
+var areaMode = false;
+var distanceMode = false;
 var currentLayer = null;
+
+// Distance measurement variables
+var distanceStartPoint = null;
+var distanceLine = null;
+var distanceMarkers = [];
+var tempLine = null;
+var isFirstClick = true;
 
 // Define all map tile layers
 var mapLayers = {
@@ -980,12 +1110,57 @@ function changeMapType(type) {
   document.getElementById('mapTypeBtn').innerHTML = mapNames[type] + ' ▼';
 }
 
-// Toggle measurement mode
-function toggleMeasure() {
-  const btn = document.getElementById('measureBtn');
-  measureMode = !measureMode;
+// Toggle distance measurement mode
+function toggleDistanceMeasure() {
+  const btn = document.getElementById('distanceBtn');
+  const instructions = document.getElementById('measureInstructions');
+  const panel = document.getElementById('distancePanel');
   
-  if (measureMode) {
+  distanceMode = !distanceMode;
+  
+  if (distanceMode) {
+    // Turn off area mode if active
+    if (areaMode) {
+      toggleAreaMeasure();
+    }
+    
+    btn.classList.add('active');
+    instructions.classList.add('show');
+    panel.classList.add('show');
+    
+    // Clear any previous measurements
+    clearDistanceMeasurement();
+    
+    // Enable distance measurement
+    map.getContainer().style.cursor = 'crosshair';
+    map.on('click', onDistanceClick);
+    map.on('mousemove', onDistanceMove);
+    
+  } else {
+    btn.classList.remove('active');
+    instructions.classList.remove('show');
+    panel.classList.remove('show');
+    
+    map.getContainer().style.cursor = '';
+    map.off('click', onDistanceClick);
+    map.off('mousemove', onDistanceMove);
+    
+    clearDistanceMeasurement();
+  }
+}
+
+// Toggle area measurement mode
+function toggleAreaMeasure() {
+  const btn = document.getElementById('areaBtn');
+  
+  areaMode = !areaMode;
+  
+  if (areaMode) {
+    // Turn off distance mode if active
+    if (distanceMode) {
+      toggleDistanceMeasure();
+    }
+    
     btn.classList.add('active');
     enableDrawing();
   } else {
@@ -1118,6 +1293,141 @@ function displayMeasurement(area, perimeter, vertices) {
 // Close measurement panel
 function closeMeasurePanel() {
   document.getElementById('measurePanel').classList.remove('show');
+}
+
+// Close distance panel
+function closeDistancePanel() {
+  if (distanceMode) {
+    toggleDistanceMeasure();
+  }
+}
+
+// Distance measurement: handle click
+function onDistanceClick(e) {
+  if (!distanceMode) return;
+  
+  if (isFirstClick) {
+    // First click: set start point
+    distanceStartPoint = e.latlng;
+    isFirstClick = false;
+    
+    // Add start marker
+    const startMarker = L.circleMarker(e.latlng, {
+      radius: 8,
+      color: '#fff',
+      fillColor: '#667eea',
+      fillOpacity: 1,
+      weight: 3
+    }).addTo(map);
+    distanceMarkers.push(startMarker);
+    
+    // Update panel
+    document.getElementById('startCoord').textContent = 
+      `${e.latlng.lat.toFixed(6)}, ${e.latlng.lng.toFixed(6)}`;
+    document.getElementById('endCoord').textContent = 'Move cursor...';
+    
+  } else {
+    // Second click: set end point and finish
+    const endPoint = e.latlng;
+    
+    // Add end marker
+    const endMarker = L.circleMarker(endPoint, {
+      radius: 8,
+      color: '#fff',
+      fillColor: '#E74C3C',
+      fillOpacity: 1,
+      weight: 3
+    }).addTo(map);
+    distanceMarkers.push(endMarker);
+    
+    // Remove temp line
+    if (tempLine) {
+      map.removeLayer(tempLine);
+      tempLine = null;
+    }
+    
+    // Draw final solid line
+    distanceLine = L.polyline([distanceStartPoint, endPoint], {
+      color: '#667eea',
+      weight: 4,
+      opacity: 0.8
+    }).addTo(map);
+    distanceMarkers.push(distanceLine);
+    
+    // Calculate final distance
+    const distance = map.distance(distanceStartPoint, endPoint);
+    updateDistanceDisplay(distance, endPoint);
+    
+    // Ready for next measurement
+    isFirstClick = true;
+    distanceStartPoint = null;
+  }
+}
+
+// Distance measurement: handle mouse move
+function onDistanceMove(e) {
+  if (!distanceMode || isFirstClick || !distanceStartPoint) return;
+  
+  // Remove previous temp line
+  if (tempLine) {
+    map.removeLayer(tempLine);
+  }
+  
+  // Draw new temp line
+  tempLine = L.polyline([distanceStartPoint, e.latlng], {
+    color: '#667eea',
+    weight: 3,
+    opacity: 0.6,
+    dashArray: '10, 10'
+  }).addTo(map);
+  
+  // Calculate and display distance in real-time
+  const distance = map.distance(distanceStartPoint, e.latlng);
+  updateDistanceDisplay(distance, e.latlng);
+}
+
+// Update distance display
+function updateDistanceDisplay(distance, endPoint) {
+  let distanceText;
+  if (distance < 1000) {
+    distanceText = distance.toFixed(2) + ' m';
+  } else {
+    distanceText = (distance / 1000).toFixed(3) + ' km';
+  }
+  
+  document.getElementById('distanceValue').textContent = distanceText;
+  document.getElementById('endCoord').textContent = 
+    `${endPoint.lat.toFixed(6)}, ${endPoint.lng.toFixed(6)}`;
+}
+
+// Clear distance measurement
+function clearDistanceMeasurement() {
+  // Remove all markers and lines
+  distanceMarkers.forEach(item => {
+    if (map.hasLayer(item)) {
+      map.removeLayer(item);
+    }
+  });
+  
+  if (tempLine && map.hasLayer(tempLine)) {
+    map.removeLayer(tempLine);
+  }
+  
+  if (distanceLine && map.hasLayer(distanceLine)) {
+    map.removeLayer(distanceLine);
+  }
+  
+  // Reset variables
+  distanceMarkers = [];
+  distanceLine = null;
+  tempLine = null;
+  distanceStartPoint = null;
+  isFirstClick = true;
+  
+  // Reset display
+  document.getElementById('distanceValue').textContent = '0 m';
+  document.getElementById('startCoord').textContent = 'Click on map';
+  document.getElementById('endCoord').textContent = 'Move cursor';
 }
 
 // Show coordinates on mouse move
